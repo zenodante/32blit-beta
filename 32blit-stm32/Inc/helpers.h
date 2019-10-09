@@ -3,8 +3,8 @@
 #define NOP()           asm("NOP;")
 //#define HIGH(PORT, PIN) PORT->BSRRL = PIN;
 //#define LOW(PORT, PIN)  PORT->BSRRH = PIN;
-#define HIGH(PORT, PIN) HAL_GPIO_WritePin(PORT, PIN, 1);
-#define LOW(PORT, PIN) HAL_GPIO_WritePin(PORT, PIN, 0);
+#define HIGH(PORT, PIN) HAL_GPIO_WritePin(PORT, PIN, GPIO_PIN_SET);
+#define LOW(PORT, PIN) HAL_GPIO_WritePin(PORT, PIN, GPIO_PIN_RESET);
 
 #define DELAY(MS)       HAL_Delay(MS)
 #define LED_ONE_ON()    LOW(GPIOC, GPIO_PIN_8);
