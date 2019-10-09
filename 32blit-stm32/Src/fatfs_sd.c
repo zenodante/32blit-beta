@@ -15,6 +15,8 @@ static uint8_t PowerFlag = 0;				/* Power flag */
  * SPI functions
  **************************************/
 
+
+
 /* slave select */
 static void SELECT(void)
 {
@@ -48,7 +50,7 @@ static uint8_t SPI_RxByte(void)
 	dummy = 0xFF;
 
 	while(!__HAL_SPI_GET_FLAG(HSPI_SDCARD, SPI_FLAG_TXE));
-	HAL_SPI_TransmitReceive(HSPI_SDCARD, &dummy, &data, 1, SPI_TIMEOUT);
+	USER_HAL_SPI_TransmitReceive(HSPI_SDCARD, &dummy, &data, 1, SPI_TIMEOUT);
 
 	return data;
 }

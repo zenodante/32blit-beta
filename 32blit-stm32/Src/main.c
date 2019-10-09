@@ -28,21 +28,22 @@ extern void render(uint32_t time);
 using namespace blit;
 
 /* peripheral handles */
-/*ADC_HandleTypeDef hadc3;
-DAC_HandleTypeDef hdac1;
-DMA_HandleTypeDef hdma_dac1_ch2;
-TIM_HandleTypeDef htim6;
+/*ADC_HandleTypeDef hadc3;;
 
 QSPI_HandleTypeDef hqspi;
 SD_HandleTypeDef hsd1;
 SPI_HandleTypeDef hspi1;
 PCD_HandleTypeDef hpcd_USB_OTG_HS;*/
+DMA_HandleTypeDef hdma_dac1_ch2;
+DAC_HandleTypeDef hdac1;
 SPI_HandleTypeDef hspi1;
 I2C_HandleTypeDef hi2c4;
 ADC_HandleTypeDef hadc1;
 LTDC_HandleTypeDef hltdc;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim6;
+HRTIM_HandleTypeDef hhrtim;
 
 
 #ifdef BLIT_ENABLE_SD
@@ -83,16 +84,26 @@ void set_screen_mode(blit::screen_mode new_mode) {
   }
 }
 
+void DFUBoot(void)
+{
+  *((uint32_t *)0x2001FFFC) = 0xCAFEBABE; // Special Key to End-of-RAM
+ 
+  SCB_CleanDCache();
+  NVIC_SystemReset();
+}
+
 static void MX_I2C4_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_DMA_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_HRTIM_Init(void);
 //static void MX_USB_OTG_HS_PCD_Init(void);
 void SystemClock_Config(void);
 void MX_GPIO_Init(void);
 void MX_TIM3_Init(void);
 void MX_TIM4_Init(void);
+void MX_TIM6_Init(void);
 void MX_LTDC_Init(void);
 void MX_ADC1_Init(void);
 void LCD_Init();
@@ -100,6 +111,13 @@ void LCD_Init();
 void process_input();
 
 int16_t acceleration_data_buffer[3];
+
+   const uint16_t __attribute__((section(".dac1_buffer"))) dac1_buffer[32] = {2047, 1648, 1264, 910, 600,  345,   
+                    156, 39,  0,  39,  156,  345,  
+                    600, 910, 1264, 1648, 2048, 2447,  
+                    2831, 3185, 3495, 3750, 3939, 4056,  
+                    4095, 4056, 3939, 3750, 3495, 3185,  
+                    2831, 2447};
 
 int main(void)
 {
@@ -119,12 +137,14 @@ int main(void)
   SCB_EnableDCache();
 
   // intialise peripherals
-//  MX_DMA_Init();
-//  MX_DAC1_Init();
 //  MX_TIM6_Init();
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_TIM3_Init();
   MX_TIM4_Init(); // VIBE_EN
+  MX_TIM6_Init(); // DAC DMA
+  MX_DAC1_Init();
+  //MX_HRTIM_Init();
   MX_LTDC_Init();
   LCD_Init();
   MX_ADC1_Init();
@@ -139,6 +159,7 @@ int main(void)
   HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_3);
   HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_4);
+  HAL_TIM_Base_Start(&htim6);
 
   
 
@@ -181,8 +202,7 @@ int main(void)
   blit::update = ::update;
   blit::render = ::render;
   blit::init   = ::init;
-
-  //HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_2, (uint32_t*)val, sizeof(val), DAC_ALIGN_12B_R);
+ 
   msa301_init(&hi2c4, MSA301_CONTROL2_POWR_MODE_NORMAL, 0x00, MSA301_CONTROL1_ODR_125HZ);
 
   int32_t adc_x, adc_y;
@@ -237,26 +257,41 @@ int main(void)
 
   while (true)
   {
+    static DAC_ChannelConfTypeDef sConfig = {0};
+    HAL_DAC_DeInit(&hdac1);
+    HAL_DAC_Init(&hdac1);
+    sConfig.DAC_Trigger = DAC_TRIGGER_T6_TRGO;
+    sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+    HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2);
+
+    HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 1, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_2, (uint32_t*)dac1_buffer, 32, DAC_ALIGN_12B_R);
+
     //blit::rgba c = blit::hsv_to_rgba((blit::now() % 5000) / 5000.0f, 1.0, 1.0);
     //rgb5x5_rgb(&hi2c4, c.r, c.g, c.b);
     process_input();
 
     //__HAL_TIM_SetCompare(&htim4, TIM_CHANNEL_1, 2000 * (int(blit::now() / 100.0f) & 1));
 
-    float scale_vibe = (sin(blit::now() / 1000.0f) + 1.0) / 2.0;
+    float scale_vibe = (sin(blit::now() / 1000.0f) + 1.0f) / 2.0f;
+
+    if(!(blit::buttons & blit::B)) {
+      scale_vibe = 0;
+    }
     __HAL_TIM_SetCompare(&htim4, TIM_CHANNEL_1, 2000 * scale_vibe);
 
 
     // RED Led
-    float scale_a = (sin(blit::now() / 1000.0f) + 1.0) / 2.0;
+    float scale_a = (sin(blit::now() / 1000.0f) + 1.0f) / 2.0f;
     __HAL_TIM_SetCompare(&htim3, TIM_CHANNEL_3, 10000 * scale_a);
 
     // GREEN Led
-    float scale_b = (cos(blit::now() / 1000.0f) + 1.0) / 2.0;
+    float scale_b = (cos(blit::now() / 1000.0f) + 1.0f) / 2.0f;
     __HAL_TIM_SetCompare(&htim3, TIM_CHANNEL_4, 5000 * scale_b);
   
     // BLUE Led
-    float scale_c = (sin(blit::now() / 1000.0f) + 1.0) / 2.0;
+    float scale_c = (sin(blit::now() / 1000.0f) + 1.0f) / 2.0f;
     __HAL_TIM_SetCompare(&htim3, TIM_CHANNEL_2, 10000 * scale_a);
 
 
@@ -500,6 +535,10 @@ void process_input() {
     bq24295_enable_shipping_mode(&hi2c4);
   }
 
+  if((blit::buttons & blit::A) && (blit::buttons & blit::HOME)) {
+    DFUBoot();
+  }
+
   // read accelerometer
 
   #ifdef I2C_READ_ACCEL
@@ -623,7 +662,7 @@ void SystemClock_Config(void)
   PeriphClkInitStruct.PLL3.PLL3FRACN = 0;
   PeriphClkInitStruct.QspiClockSelection = RCC_QSPICLKSOURCE_D1HCLK;
   PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
-  PeriphClkInitStruct.Spi123ClockSelection = RCC_SPI123CLKSOURCE_PLL2;
+  PeriphClkInitStruct.Spi123ClockSelection = RCC_SPI123CLKSOURCE_PLL;
   PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_HSI48;
   PeriphClkInitStruct.I2c4ClockSelection = RCC_I2C4CLKSOURCE_D3PCLK1;
   PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_PLL2;
@@ -1069,7 +1108,7 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 2000;
+  sConfigOC.Pulse = 0; // was 2000;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -1309,7 +1348,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1335,11 +1374,11 @@ static void MX_SPI1_Init(void)
 }
 
 /* DAC1 init function */
-/*
+
 static void MX_DAC1_Init(void)
 {
 
-  DAC_ChannelConfTypeDef sConfig;
+  DAC_ChannelConfTypeDef sConfig = {0};
 
     //**DAC Initialization
 
@@ -1352,56 +1391,126 @@ static void MX_DAC1_Init(void)
     //**DAC channel OUT2 config
 
   sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
-  sConfig.DAC_Trigger = 0x00000004; // timer 6
+  sConfig.DAC_Trigger = DAC_TRIGGER_T6_TRGO;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
-  sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
-  sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
+  //sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_ENABLE;
+  //sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
   if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
 
-}*/
+}
 
-/* TIM6 init function */
-/*static void MX_TIM6_Init(void)
+/**
+  * @brief HRTIM Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_HRTIM_Init(void)
 {
 
-  TIM_MasterConfigTypeDef sMasterConfig;
+  /* USER CODE BEGIN HRTIM_Init 0 */
 
+  /* USER CODE END HRTIM_Init 0 */
+
+  HRTIM_TimeBaseCfgTypeDef pTimeBaseCfg = {0};
+  HRTIM_TimerCfgTypeDef pTimerCfg = {0};
+
+  /* USER CODE BEGIN HRTIM_Init 1 */
+
+  /* USER CODE END HRTIM_Init 1 */
+  hhrtim.Instance = HRTIM1;
+  hhrtim.Init.HRTIMInterruptResquests = HRTIM_IT_NONE;
+  hhrtim.Init.SyncOptions = HRTIM_SYNCOPTION_NONE;
+  if (HAL_HRTIM_Init(&hhrtim) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  pTimeBaseCfg.Period = 0xFFFD;
+  pTimeBaseCfg.RepetitionCounter = 0x00;
+  pTimeBaseCfg.PrescalerRatio = HRTIM_PRESCALERRATIO_DIV4;
+  pTimeBaseCfg.Mode = HRTIM_MODE_CONTINUOUS;
+  if (HAL_HRTIM_TimeBaseConfig(&hhrtim, HRTIM_TIMERINDEX_MASTER, &pTimeBaseCfg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  pTimerCfg.InterruptRequests = HRTIM_MASTER_IT_NONE;
+  pTimerCfg.DMARequests = HRTIM_MASTER_DMA_NONE;
+  pTimerCfg.DMASrcAddress = 0x0000;
+  pTimerCfg.DMADstAddress = 0x0000;
+  pTimerCfg.DMASize = 0x1;
+  pTimerCfg.HalfModeEnable = HRTIM_HALFMODE_DISABLED;
+  pTimerCfg.StartOnSync = HRTIM_SYNCSTART_DISABLED;
+  pTimerCfg.ResetOnSync = HRTIM_SYNCRESET_DISABLED;
+  pTimerCfg.DACSynchro = HRTIM_DACSYNC_NONE;
+  pTimerCfg.PreloadEnable = HRTIM_PRELOAD_DISABLED;
+  pTimerCfg.UpdateGating = HRTIM_UPDATEGATING_INDEPENDENT;
+  pTimerCfg.BurstMode = HRTIM_TIMERBURSTMODE_MAINTAINCLOCK;
+  pTimerCfg.RepetitionUpdate = HRTIM_UPDATEONREPETITION_DISABLED;
+  if (HAL_HRTIM_WaveformTimerConfig(&hhrtim, HRTIM_TIMERINDEX_MASTER, &pTimerCfg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN HRTIM_Init 2 */
+
+  /* USER CODE END HRTIM_Init 2 */
+
+}
+
+/**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 400;
+  htim6.Init.Prescaler = 1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 1000;
-  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim6.Init.Period = 0x8ff;
+  htim6.Init.ClockDivision     = 0;
+  htim6.Init.RepetitionCounter = 0;
+  //htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
-    _Error_Handler(__FILE__, __LINE__);
+    Error_Handler();
   }
-
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
   {
-    _Error_Handler(__FILE__, __LINE__);
+    Error_Handler();
   }
+  /* USER CODE BEGIN TIM6_Init 2 */
 
-}*/
+  /* USER CODE END TIM6_Init 2 */
+
+}
 
 /**
   * Enable DMA controller clock
   */
-/*static void MX_DMA_Init(void)
+static void MX_DMA_Init(void)
 {
   // DMA controller clock enable
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   // DMA interrupt init
   // DMA1_Stream0_IRQn interrupt configuration
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-
-}*/
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+}
 
 /* USER CODE BEGIN 4 */
 

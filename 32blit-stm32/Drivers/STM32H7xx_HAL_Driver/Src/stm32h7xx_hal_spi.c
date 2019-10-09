@@ -898,6 +898,152 @@ HAL_StatusTypeDef HAL_SPI_Receive(SPI_HandleTypeDef *hspi, uint8_t *pData, uint1
   return HAL_OK;
 }
 
+
+// USER
+
+HAL_StatusTypeDef USER_HAL_SPI_TransmitReceive(SPI_HandleTypeDef *hspi, uint8_t *pTxData, uint8_t *pRxData, uint16_t Size,
+                                          uint32_t Timeout)
+{
+  uint32_t tickstart = 0U;
+  HAL_StatusTypeDef errorcode = HAL_OK;
+
+  /* Check Direction parameter */
+  assert_param(IS_SPI_DIRECTION_2LINES(hspi->Init.Direction));
+
+  /* Process Locked */
+  __HAL_LOCK(hspi);
+
+  /* Init tickstart for timeout management*/
+  tickstart = HAL_GetTick();
+
+  if (!((hspi->State == HAL_SPI_STATE_READY) || \
+        ((hspi->Init.Direction == SPI_DIRECTION_2LINES) && (hspi->State == HAL_SPI_STATE_BUSY_RX))))
+  {
+    errorcode = HAL_BUSY;
+    __HAL_UNLOCK(hspi);
+    return errorcode;
+  }
+
+  if ((pTxData == NULL) || (pRxData == NULL) || (Size == 0U))
+  {
+    errorcode = HAL_ERROR;
+    __HAL_UNLOCK(hspi);
+    return errorcode;
+  }
+
+  /* Don't overwrite in case of HAL_SPI_STATE_BUSY_RX */
+  if (hspi->State != HAL_SPI_STATE_BUSY_RX)
+  {
+    hspi->State = HAL_SPI_STATE_BUSY_TX_RX;
+  }
+
+  /* Set the transaction information */
+  hspi->ErrorCode   = HAL_SPI_ERROR_NONE;
+  hspi->pRxBuffPtr  = (uint8_t *)pRxData;
+  hspi->RxXferCount = Size;
+  hspi->RxXferSize  = Size;
+  hspi->pTxBuffPtr  = (uint8_t *)pTxData;
+  hspi->TxXferCount = Size;
+  hspi->TxXferSize  = Size;
+
+  /*Init field not used in handle to zero */
+  hspi->RxISR       = NULL;
+  hspi->TxISR       = NULL;
+
+  /* Set the number if data at current transfer */
+  MODIFY_REG(hspi->Instance->CR2, SPI_CR2_TSIZE, Size);
+
+  __HAL_SPI_ENABLE(hspi);
+
+
+    /* Master transfer start */
+    SET_BIT(hspi->Instance->CR1, SPI_CR1_CSTART);
+  
+
+    while ((hspi->TxXferCount > 0U) || (hspi->RxXferCount > 0U))
+    {
+      /* check TXE flag */
+      if ((hspi->TxXferCount > 0U) && (__HAL_SPI_GET_FLAG(hspi, SPI_FLAG_TXE)))
+      {
+        if ((hspi->TxXferCount > 3U) && (hspi->Init.FifoThreshold > SPI_FIFO_THRESHOLD_03DATA))
+        {
+          *((__IO uint32_t *)&hspi->Instance->TXDR) = *((uint32_t *)hspi->pTxBuffPtr);
+          hspi->pTxBuffPtr += sizeof(uint32_t);
+          hspi->TxXferCount-=4;
+        }
+        else if ((hspi->TxXferCount > 1U) && (hspi->Init.FifoThreshold > SPI_FIFO_THRESHOLD_01DATA))
+        {
+          *((__IO uint16_t *)&hspi->Instance->TXDR) = *((uint16_t *)hspi->pTxBuffPtr);
+          hspi->pTxBuffPtr += sizeof(uint16_t);
+          hspi->TxXferCount-=2;
+        }
+        else
+        {
+          *((__IO uint8_t *)&hspi->Instance->TXDR) = *((uint8_t *)hspi->pTxBuffPtr);
+          hspi->pTxBuffPtr += sizeof(uint8_t);
+          hspi->TxXferCount--;
+        }
+      }
+
+      /* Wait until RXWNE/FRLVL flag is reset */
+      if ((hspi->RxXferCount > 0U) && (hspi->Instance->SR & (SPI_FLAG_RXWNE|SPI_FLAG_FRLVL)))
+      {
+        if (hspi->Instance->SR & SPI_FLAG_RXWNE)
+        {
+          *((uint32_t *)hspi->pRxBuffPtr) = *((__IO uint32_t *)&hspi->Instance->RXDR);
+          hspi->pRxBuffPtr += sizeof(uint32_t);
+          hspi->RxXferCount-=4;
+        }
+        else if ((hspi->Instance->SR & SPI_FLAG_FRLVL) > SPI_FRLVL_QUARTER_FULL)
+        {
+          *((uint16_t *)hspi->pRxBuffPtr) = *((__IO uint16_t *)&hspi->Instance->RXDR);
+          hspi->pRxBuffPtr += sizeof(uint16_t);
+          hspi->RxXferCount-=2;
+        }
+        else
+        {
+          *((uint8_t *)hspi->pRxBuffPtr) = *((__IO uint8_t *)&hspi->Instance->RXDR);
+          hspi->pRxBuffPtr += sizeof(uint8_t);
+          hspi->RxXferCount--;
+        }
+      }
+
+      if ((Timeout != HAL_MAX_DELAY) && ((HAL_GetTick() - tickstart) >=  Timeout))
+      {
+        /* Call standard close procedure with error check */
+        SPI_CloseTransfer(hspi);
+
+        /* Process Unlocked */
+        __HAL_UNLOCK(hspi);
+
+        SET_BIT(hspi->ErrorCode, HAL_SPI_ERROR_TIMEOUT);
+        hspi->State = HAL_SPI_STATE_READY;
+        return HAL_ERROR;
+      }
+    }
+
+  /* Wait for Tx/Rx (and CRC) data to be sent/received */
+  if (SPI_WaitOnFlagUntilTimeout(hspi, SPI_FLAG_EOT, RESET, tickstart, Timeout) != HAL_OK)
+  {
+    SET_BIT(hspi->ErrorCode, HAL_SPI_ERROR_FLAG);
+  }
+
+  /* Call standard close procedure with error check */
+  SPI_CloseTransfer(hspi);
+
+       /* Process Unlocked */
+  __HAL_UNLOCK(hspi);
+
+  hspi->State = HAL_SPI_STATE_READY;
+
+  if (hspi->ErrorCode != HAL_SPI_ERROR_NONE)
+  {
+    return HAL_ERROR;
+  }
+  return HAL_OK;
+}
+
+
 /**
   * @brief  Transmit and Receive an amount of data in blocking mode.
   * @param  hspi: pointer to a SPI_HandleTypeDef structure that contains

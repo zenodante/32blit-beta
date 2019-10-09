@@ -177,6 +177,12 @@ SECTIONS
     __ltdc_end = .;
   } >LTDC
 
+  .dac1_buffer (NOLOAD):
+  {
+    . = ALIGN(4);
+    *(.dac1_buffer)
+  } >RAM_D3
+
   .ss (NOLOAD):
   {
     . = ALIGN(4);

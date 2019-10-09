@@ -38,6 +38,7 @@
   */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+extern DMA_HandleTypeDef hdma_dac1_ch2;
 extern void _Error_Handler(char *, int);
 /* USER CODE BEGIN 0 */
                         
@@ -170,6 +171,12 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
 
   /* USER CODE END TIM4_MspInit 1 */
   }
+  else if(htim_base->Instance==TIM6)
+  {
+    __HAL_RCC_TIM6_CLK_ENABLE();
+    HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 1, 0);
+    HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
+  }
 
 }
 
@@ -271,6 +278,8 @@ void HAL_DAC_MspInit(DAC_HandleTypeDef* hdac)
   /* USER CODE END DAC1_MspInit 0 */
     /* Peripheral clock enable */
     __HAL_RCC_DAC12_CLK_ENABLE();
+    __HAL_RCC_DMA1_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
   
     /**DAC1 GPIO Configuration    
     PA5     ------> DAC1_OUT2 
@@ -279,6 +288,29 @@ void HAL_DAC_MspInit(DAC_HandleTypeDef* hdac)
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    /* DAC1 DMA Init */
+    /* DAC1_CH2 Init */
+    hdma_dac1_ch2.Instance = DMA1_Stream6;
+    hdma_dac1_ch2.Init.Request = DMA_REQUEST_DAC1_CH2;
+    hdma_dac1_ch2.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    hdma_dac1_ch2.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_dac1_ch2.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_dac1_ch2.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_dac1_ch2.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_dac1_ch2.Init.Mode = DMA_NORMAL;
+    hdma_dac1_ch2.Init.Priority = DMA_PRIORITY_HIGH;
+    hdma_dac1_ch2.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+    if (HAL_DMA_Init(&hdma_dac1_ch2) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(hdac,DMA_Handle2,hdma_dac1_ch2);
+
+  
+    HAL_NVIC_SetPriority(DMAMUX1_OVR_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMAMUX1_OVR_IRQn);
 
   /* USER CODE BEGIN DAC1_MspInit 1 */
 
@@ -306,6 +338,50 @@ void HAL_DAC_MspDeInit(DAC_HandleTypeDef* hdac)
   /* USER CODE BEGIN DAC1_MspDeInit 1 */
 
   /* USER CODE END DAC1_MspDeInit 1 */
+  }
+
+}
+
+/**
+* @brief HRTIM MSP Initialization
+* This function configures the hardware resources used in this example
+* @param hhrtim: HRTIM handle pointer
+* @retval None
+*/
+void HAL_HRTIM_MspInit(HRTIM_HandleTypeDef* hhrtim)
+{
+  if(hhrtim->Instance==HRTIM1)
+  {
+  /* USER CODE BEGIN HRTIM1_MspInit 0 */
+
+  /* USER CODE END HRTIM1_MspInit 0 */
+    /* Peripheral clock enable */
+    __HAL_RCC_HRTIM1_CLK_ENABLE();
+  /* USER CODE BEGIN HRTIM1_MspInit 1 */
+
+  /* USER CODE END HRTIM1_MspInit 1 */
+  }
+
+}
+
+/**
+* @brief HRTIM MSP De-Initialization
+* This function freeze the hardware resources used in this example
+* @param hhrtim: HRTIM handle pointer
+* @retval None
+*/
+void HAL_HRTIM_MspDeInit(HRTIM_HandleTypeDef* hhrtim)
+{
+  if(hhrtim->Instance==HRTIM1)
+  {
+  /* USER CODE BEGIN HRTIM1_MspDeInit 0 */
+
+  /* USER CODE END HRTIM1_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_HRTIM1_CLK_DISABLE();
+  /* USER CODE BEGIN HRTIM1_MspDeInit 1 */
+
+  /* USER CODE END HRTIM1_MspDeInit 1 */
   }
 
 }
@@ -686,7 +762,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
 	GPIO_InitStruct.Pin = GPIO_PIN_15; // SD_SPI1_CS
 	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
-	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   GPIO_InitStruct.Pin = GPIO_PIN_7; // SD_SPI1_MOSI

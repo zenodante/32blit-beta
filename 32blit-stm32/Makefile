@@ -20,6 +20,7 @@ Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_adc_ex.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cortex.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dac.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dac_ex.c \
+Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_hrtim.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_smbus.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_ltdc.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_qspi.c \
