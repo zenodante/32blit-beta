@@ -105,7 +105,7 @@ static void SD_PowerOn(void)
 	args[4] = 0;
 	args[5] = 0x95;		/* CRC */
 
-	SPI_TxBuffer(args, sizeof(args));
+	SPI_TxBuffer(args, 6); // sizeof(args));
 
 	/* wait response */
 	while ((SPI_RxByte() != 0x01) && cnt)
@@ -135,6 +135,7 @@ static uint8_t SD_CheckPower(void)
 static bool SD_RxDataBlock(BYTE *buff, UINT len)
 {
 	uint8_t token;
+	//static uint8_t dummy[2];
 
 	/* timeout 200ms */
 	Timer1 = 200;
@@ -148,13 +149,33 @@ static bool SD_RxDataBlock(BYTE *buff, UINT len)
 	if(token != 0xFE) return FALSE;
 
 	/* receive data */
-	do {
+
+
+	// Directly use HAL_SPI_TransmitReceive which also works
+	for(int x = 0; x < len; x++){    // SD card expects 0xff dummy bytes for reads
+		buff[x] = 0xff;
+	}
+	//while(!__HAL_SPI_GET_FLAG(HSPI_SDCARD, SPI_FLAG_TXE));
+	USER_HAL_SPI_TransmitReceive(HSPI_SDCARD, buff, buff, len, SPI_TIMEOUT);
+
+	/* partially inlined version which works
+	BYTE dummy = 0xff;
+	for(int x = 0; x < len; x++){
+		while(!__HAL_SPI_GET_FLAG(HSPI_SDCARD, SPI_FLAG_TXE));
+		USER_HAL_SPI_TransmitReceive(HSPI_SDCARD, &dummy, buff + x, 1, SPI_TIMEOUT);
+	}
+	*/
+
+	// Weird original loop which calls USER_HAL_SPI_TransmitReceive for EACH BYTE
+	// Why does it do this?
+	/*do {   // TODO: What the heck!?
 		SPI_RxBytePtr(buff++);
-	} while(len--);
+	} while(len--);*/
 
 	/* discard CRC */
 	SPI_RxByte();
 	SPI_RxByte();
+	//HAL_SPI_Receive(HSPI_SDCARD, dummy, 2, SPI_TIMEOUT);
 
 	return TRUE;
 }
@@ -211,11 +232,22 @@ static BYTE SD_SendCmd(BYTE cmd, uint32_t arg)
 	if (SD_ReadyWait() != 0xFF) return 0xFF;
 
 	/* transmit command */
-	SPI_TxByte(cmd); 					/* Command */
-	SPI_TxByte((uint8_t)(arg >> 24)); 	/* Argument[31..24] */
-	SPI_TxByte((uint8_t)(arg >> 16)); 	/* Argument[23..16] */
-	SPI_TxByte((uint8_t)(arg >> 8)); 	/* Argument[15..8] */
-	SPI_TxByte((uint8_t)arg); 			/* Argument[7..0] */
+	/*
+	SPI_TxByte(cmd); 					// Command
+	SPI_TxByte((uint8_t)(arg >> 24)); 	// Argument[31..24]
+	SPI_TxByte((uint8_t)(arg >> 16)); 	// Argument[23..16]
+	SPI_TxByte((uint8_t)(arg >> 8)); 	// Argument[15..8]
+	SPI_TxByte((uint8_t)arg); 			// Argument[7..0]
+	*/
+
+	uint8_t data[5];
+	data[0] = cmd;
+	data[1] = (uint8_t)(arg >> 24);
+	data[2] = (uint8_t)(arg >> 16);
+	data[3] = (uint8_t)(arg >> 8);
+	data[4] = (uint8_t)(arg);
+	// HAL_SPI_Transmit(HSPI_SDCARD, data, 5, SPI_TIMEOUT);
+	SPI_TxBuffer(data, 5);
 
 	/* prepare CRC */
 	if(cmd == CMD0) crc = 0x95;	/* CRC for CMD0(0) */
